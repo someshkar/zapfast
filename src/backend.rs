@@ -167,6 +167,14 @@ pub enum Command {
         text: String,
         quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
+        /// Metadata for a link the reader is sending, read from the page by
+        /// the composer. `None` sends the bare text.
+        preview: Option<crate::link_preview::Preview>,
+    },
+    /// Reads a link's page so the composer can show, and later send, a card.
+    FetchLinkPreview {
+        request: u64,
+        url: String,
     },
     SendLocation {
         chat: ChatId,
@@ -1047,6 +1055,11 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// What the composer's link preview request found, or `None` for no card.
+    LinkPreview {
+        request: u64,
+        preview: Option<crate::link_preview::Preview>,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,

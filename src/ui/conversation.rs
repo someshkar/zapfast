@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
+use crate::app::{App, ComposerPreview, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
@@ -1471,6 +1471,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
             }
             app.prepare_composer_undo(ui.ctx());
+            if app.editing.is_none() {
+                app.sync_composer_preview(ui.ctx(), &chat.id);
+                if let Some(card) = app.composer_preview.clone() {
+                    preview_strip(app, ui, &card);
+                }
+            }
             let id = composer_id();
             let has_focus = ui.memory(|memory| memory.has_focus(id));
             let enter_sends = app.settings.enter_sends;
@@ -2091,6 +2097,86 @@ const STRIP_RADIUS: u8 = 16;
 /// light theme is white on the chat rather than the grey interface surface.
 /// Its content starts 14 points in, so a reply's accent bar lines up with
 /// the composer's plus below it.
+/// The card for the link in the draft, straight from the page's own metadata.
+///
+/// It is the same card the sent message will show, drawn before the send so
+/// the reader can see what travels with the link, and dismiss it.
+fn preview_strip(app: &mut App, ui: &mut egui::Ui, card: &ComposerPreview) {
+    let Some(preview) = &card.preview else {
+        return;
+    };
+    if card.silent {
+        return;
+    }
+    let palette = app.palette;
+    let domain = preview
+        .url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&preview.url)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let uri = format!("composer-preview-{}", card.request);
+    let dismissed = std::cell::Cell::new(false);
+    widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+        ui.set_width(ui.available_width().max(0.0));
+        ui.horizontal(|ui| {
+            if let Some(bytes) = &preview.thumbnail {
+                let size = Vec2::splat(44.0);
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                if ui.is_rect_visible(rect) {
+                    let source = thumbnail_uri(ui.ctx(), "composer", &uri, bytes);
+                    egui::Image::new(source)
+                        .fit_to_exact_size(size)
+                        .corner_radius(4.0)
+                        .paint_at(ui, rect);
+                }
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                if let Some(title) = &preview.title {
+                    widgets::rich_text(ui, title, theme::semibold(13.0), palette.text);
+                }
+                if let Some(description) = &preview.description {
+                    let line = widgets::line(
+                        ui,
+                        description,
+                        theme::regular(12.0),
+                        palette.secondary,
+                        ui.available_width(),
+                        1,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                    line.paint(ui, rect.min, palette.secondary);
+                }
+                theme::text(ui, &domain, theme::regular(11.5), palette.dim);
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if theme::icon_button(
+                    ui,
+                    Icon::X,
+                    16.0,
+                    palette.secondary,
+                    palette.text,
+                    "Remove link preview",
+                )
+                .clicked()
+                {
+                    dismissed.set(true);
+                }
+            });
+        });
+    });
+    strip_gap(ui);
+    if dismissed.get() {
+        app.preview_dismissed = Some(card.url.clone());
+        app.composer_preview = None;
+    }
+}
+
 fn strip_frame(palette: &Palette) -> Frame {
     Frame::new()
         .fill(palette.bubble_in)
