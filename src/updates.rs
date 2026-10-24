@@ -22,12 +22,15 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
         executable_names: &[],
         legacy_bundle_names: &["FastsApp.app"],
     },
-    publisher_key: Some(include_str!("../assets/update-public-key.hex")),
-    // The next release key, backed up outside GitHub. Releases stay signed
-    // with the current key until installs trust this one too.
-    additional_publisher_keys: &[include_str!("../assets/update-public-key-next.hex")],
+    // This fork has no signing key, and it must never install an upstream
+    // build over itself: upstream would ship without the link previews the
+    // fork exists for. With no key the updater trusts the checksum file
+    // alone, and the repository is the fork, so upstream's releases are not
+    // even looked at.
+    publisher_key: None,
+    additional_publisher_keys: &[],
     ..UpdateConfig::new(
-        "crmne/zapfast",
+        "someshkar/zapfast",
         "ZapFast",
         "zapfast",
         env!("CARGO_PKG_VERSION"),

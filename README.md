@@ -4,6 +4,15 @@
 
 <h1 align="center">ZapFast</h1>
 
+> **This is a fork.** It adds link previews the sender's own machine
+> generates: paste a link into the composer and ZapFast reads the page, shows
+> the card before you send, and attaches that title, description and picture to
+> the message so every recipient sees it. Upstream deliberately does not fetch
+> links (`crmne/zapfast#347`, `crmne/zapfast#227`); links other people send are
+> still never opened here, and **Settings → Chats → Preview links** turns the
+> feature off. Builds: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+> `x86_64-pc-windows-msvc`.
+
 <p align="center"><strong>WhatsApp, native and fast.</strong><br>A lightweight WhatsApp app for Linux, macOS, and Windows.</p>
 
 <p align="center">
