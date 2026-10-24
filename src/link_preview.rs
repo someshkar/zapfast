@@ -715,6 +715,31 @@ mod tests {
         assert_eq!(crate::safety::preview_url("javascript:alert(1)"), None);
     }
 
+    /// Reads a real page over the network. Run by hand:
+    /// `cargo test --lib --  --ignored a_real_page`
+    #[tokio::test]
+    #[ignore]
+    async fn a_real_page_is_read_for_its_own_metadata() {
+        let preview = fetch("https://zapfast.rocks/").await.expect("preview");
+        eprintln!(
+            "url={} title={:?} description={:?} thumbnail={:?} bytes {}x{}",
+            preview.url,
+            preview.title,
+            preview.description,
+            preview.thumbnail.as_ref().map(Vec::len),
+            preview.thumbnail_width,
+            preview.thumbnail_height,
+        );
+        assert!(
+            preview.title.is_some() || preview.description.is_some(),
+            "the page should describe itself"
+        );
+        if let Some(thumbnail) = &preview.thumbnail {
+            assert!(thumbnail.len() <= MAX_THUMBNAIL_BYTES);
+            assert!(thumbnail.starts_with(&[0xff, 0xd8]), "not a JPEG");
+        }
+    }
+
     #[tokio::test]
     async fn a_loopback_page_is_not_fetched() {
         assert!(fetch("http://127.0.0.1:9/").await.is_none());
