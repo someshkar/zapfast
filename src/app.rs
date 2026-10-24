@@ -18086,6 +18086,112 @@ mod tests {
     }
 
     #[test]
+    fn the_composer_asks_for_a_link_only_once_it_settles() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat: crate::model::ChatId = "fixture@s.whatsapp.net".into();
+        app.open_chat = Some(chat.clone());
+        let ctx = egui::Context::default();
+
+        app.composer = "look at https://zapfast.rocks/".into();
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(
+            commands.try_recv().is_err(),
+            "the first frame only starts the wait"
+        );
+
+        // The address sits still past the debounce.
+        app.preview_wait = app
+            .preview_wait
+            .take()
+            .map(|(url, _)| (url, Instant::now() - PREVIEW_DEBOUNCE));
+        app.sync_composer_preview(&ctx, &chat);
+        match commands.try_recv().expect("a fetch") {
+            Command::FetchLinkPreview { request, url } => {
+                assert_eq!(url, "https://zapfast.rocks/");
+                assert_eq!(request, 1);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // A card already asked for is not asked for again every frame.
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(commands.try_recv().is_err());
+
+        // Neither is a link the setting turns off.
+        app.settings.preview_links = false;
+        app.composer = "another https://example.com/page".into();
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(app.composer_preview.is_none());
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_card_travels_with_its_own_draft_only() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat: crate::model::ChatId = "fixture@s.whatsapp.net".into();
+        app.open_chat = Some(chat.clone());
+        let ctx = egui::Context::default();
+        let card = ComposerPreview {
+            chat: chat.clone(),
+            url: "https://zapfast.rocks/".into(),
+            preview: Some(crate::link_preview::Preview {
+                url: "https://zapfast.rocks/".into(),
+                matched: "https://zapfast.rocks/".into(),
+                title: Some("ZapFast".into()),
+                description: None,
+                thumbnail: None,
+                thumbnail_width: 0,
+                thumbnail_height: 0,
+            }),
+            request: 1,
+            silent: false,
+        };
+
+        // The draft still holds the link: the card goes with it.
+        app.composer_preview = Some(card.clone());
+        app.apply(
+            Action::SendText {
+                chat: chat.clone(),
+                text: "look at https://zapfast.rocks/".into(),
+                quoting: None,
+            },
+            &ctx,
+        );
+        let sent = drain_send(&mut commands).expect("a send");
+        assert_eq!(sent.title.as_deref(), Some("ZapFast"));
+
+        // The text no longer holds it: the message goes out bare.
+        app.composer_preview = Some(card);
+        app.apply(
+            Action::SendText {
+                chat,
+                text: "just words".into(),
+                quoting: None,
+            },
+            &ctx,
+        );
+        assert!(drain_send(&mut commands).is_none());
+    }
+
+    /// The card the send command carries, past the draft bookkeeping queued
+    /// before it.
+    fn drain_send(
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) -> Option<crate::link_preview::Preview> {
+        while let Ok(command) = commands.try_recv() {
+            if let Command::SendText { preview, .. } = command {
+                return Some(preview).flatten();
+            }
+        }
+        panic!("no send command");
+    }
+
+    #[test]
     fn sending_a_spot_closes_the_dialog_and_a_refusal_brings_it_back() {
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
