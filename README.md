@@ -11,7 +11,8 @@
 > links (`crmne/zapfast#347`, `crmne/zapfast#227`); links other people send are
 > still never opened here, and **Settings → Chats → Preview links** turns the
 > feature off. Builds: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
-> `x86_64-pc-windows-msvc`.
+> `x86_64-pc-windows-gnu`. Releases are built from the authors' own machines by
+> `scripts/fork-release.sh`, not by CI runners.
 
 <p align="center"><strong>WhatsApp, native and fast.</strong><br>A lightweight WhatsApp app for Linux, macOS, and Windows.</p>
 
