@@ -120,12 +120,15 @@ Builds: \`x86_64-unknown-linux-gnu\`, \`aarch64-apple-darwin\`,
 macOS is ad-hoc signed: on first launch, right-click → Open, or run
 \`xattr -dr com.apple.quarantine /Applications/ZapFast.app\`.
 NOTES
-if gh release view "$tag" --repo "$(git remote get-url origin | sed 's#.*[:/]\([^/]*/[^/]*\)\.git#\1#')" >/dev/null 2>&1; then
-    gh release upload "$tag" "$dist/$linux_name.tar.gz" "$dist/zapfast-${tag}-macos-arm64.zip" \
-        "$dist/zapfast-${tag}-x86_64-pc-windows-gnu.zip" --clobber
+repo="$(git remote get-url origin | sed 's#.*[:/]\([^/]*/[^/]*\)\.git#\1#')"
+files=("$dist/$linux_name.tar.gz" "$dist/zapfast-${tag}-macos-arm64.zip" \
+    "$dist/zapfast-${tag}-x86_64-pc-windows-gnu.zip")
+# gh from outside the checkout: a mise-managed gh refuses to start inside a
+# directory whose mise.toml is not trusted.
+if (cd "$(mktemp -d)" && gh release view "$tag" --repo "$repo") >/dev/null 2>&1; then
+    (cd "$(mktemp -d)" && gh release upload "$tag" "${files[@]}" --repo "$repo" --clobber)
 else
-    gh release create "$tag" "$dist/$linux_name.tar.gz" "$dist/zapfast-${tag}-macos-arm64.zip" \
-        "$dist/zapfast-${tag}-x86_64-pc-windows-gnu.zip" \
-        --title "ZapFast fork $tag (link previews)" --prerelease --notes-file "$notes"
+    (cd "$(mktemp -d)" && gh release create "$tag" "${files[@]}" --repo "$repo" \
+        --title "ZapFast fork $tag (link previews)" --prerelease --notes-file "$notes")
 fi
 rm -f "$notes"
