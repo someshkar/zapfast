@@ -7267,7 +7267,11 @@ impl Worker {
                 mentions,
                 preview,
             } => self.send_text(chat, text, quoting, mentions, preview),
+<<<<<<< HEAD
             Command::FetchLinkPreview { url } => self.fetch_link_preview(url),
+=======
+            Command::FetchLinkPreview { request, url } => self.fetch_link_preview(request, url),
+>>>>>>> 6ffd151 (Link previews for the links you send)
             Command::SendLocation {
                 chat,
                 latitude,
@@ -9507,6 +9511,16 @@ impl Worker {
         });
     }
 
+    /// Reads a link's page for the composer, off the interface thread.
+    fn fetch_link_preview(&self, request: u64, url: String) {
+        let (events, waker) = (self.events.clone(), self.waker.clone());
+        tokio::spawn(async move {
+            let preview = crate::link_preview::fetch(&url).await;
+            let _ = events.send(Event::LinkPreview { request, preview });
+            waker.wake();
+        });
+    }
+
     /// Dispatches composed text with its explicit quote target and restores it on refusal.
     fn send_text(
         &mut self,
@@ -9514,7 +9528,11 @@ impl Worker {
         text: String,
         quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
+<<<<<<< HEAD
         preview: Option<crate::model::ComposedPreview>,
+=======
+        preview: Option<crate::link_preview::Preview>,
+>>>>>>> 6ffd151 (Link previews for the links you send)
     ) {
         let (context, shown) = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(Some((context, shown))) => (Some(context), Some(shown)),
@@ -9532,11 +9550,31 @@ impl Worker {
         if self.wants_mention_all(&chat, &text) {
             crate::mentions::push_everyone_id(&mut mentions);
         }
+<<<<<<< HEAD
         let (mut message, content, thumbnail) =
             self.compose_text(text, context, &mentions, preview);
+=======
+        let mut message = outgoing_text(text.clone(), context, &mentions, preview.as_ref());
+>>>>>>> 6ffd151 (Link previews for the links you send)
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
         let id = client.generate_message_id().into_string();
+        // The card shows on this machine as soon as the bubble does, the way
+        // the phone draws its own while the message is still in flight.
+        let (content, thumbnail) = match preview {
+            Some(preview) => (
+                Content::Text {
+                    text,
+                    preview: Some(crate::model::LinkPreview {
+                        url: preview.url,
+                        title: preview.title,
+                        description: preview.description,
+                    }),
+                },
+                preview.thumbnail,
+            ),
+            None => (Content::text(text), None),
+        };
         let row = Message {
             id: id.clone(),
             chat: chat.clone(),
@@ -11079,7 +11117,7 @@ impl Worker {
         if already_mentioned_everyone {
             mentions.retain(|id| id != crate::mentions::ALL_ID);
         }
-        let mut message = outgoing_text(text, None, &mentions);
+        let mut message = outgoing_text(text, None, &mentions, None);
         self.apply_ephemeral(chat, &mut message);
         Ok((message, content, mention_rows))
     }
@@ -12422,6 +12460,7 @@ fn outgoing_text(
     text: String,
     mut context: Option<wa::ContextInfo>,
     mentions: &[String],
+    preview: Option<&crate::link_preview::Preview>,
 ) -> wa::Message {
     let (jids, mention_all) = participant_mentions(mentions);
     if !jids.is_empty() || mention_all {
@@ -12432,6 +12471,26 @@ fn outgoing_text(
         if mention_all {
             ctx.non_jid_mentions = Some(crate::mentions::with_flag(ctx.non_jid_mentions));
         }
+    }
+    if let Some(preview) = preview {
+        // A card is `extendedTextMessage` metadata, the same shape WhatsApp
+        // sends when the phone read the page before the message went out.
+        let mut extended = wa::message::ExtendedTextMessage::default();
+        extended.text = Some(text);
+        extended.matched_text = Some(preview.matched.clone());
+        extended.title = preview.title.clone();
+        extended.description = preview.description.clone();
+        extended.jpeg_thumbnail = preview.thumbnail.clone();
+        if preview.thumbnail.is_some() {
+            extended.thumbnail_width = Some(preview.thumbnail_width);
+            extended.thumbnail_height = Some(preview.thumbnail_height);
+        }
+        if let Some(context) = context {
+            extended.context_info = MessageField::some(context);
+        }
+        let mut proto = wa::Message::default();
+        proto.extended_text_message = MessageField::some(extended);
+        return proto;
     }
     match context {
         Some(context) => wa::Message::text_with_context(text, context),
@@ -15349,6 +15408,7 @@ mod tests {
                 proto
             }),
             &[],
+            None,
         )
     }
 
@@ -17913,6 +17973,54 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_link_carries_the_card_its_reader_saw() {
+        let preview = crate::link_preview::Preview {
+            url: "https://zapfast.rocks/".into(),
+            matched: "zapfast.rocks".into(),
+            title: Some("ZapFast".into()),
+            description: Some("WhatsApp, native and fast".into()),
+            thumbnail: Some(vec![0xff, 0xd8, 0xff]),
+            thumbnail_width: 192,
+            thumbnail_height: 128,
+        };
+        let message = outgoing_text("look at zapfast.rocks".into(), None, &[], Some(&preview));
+        // The card is metadata, not the body: the text still reads as typed.
+        assert_eq!(message.text_content(), Some("look at zapfast.rocks"));
+        let extended = message
+            .extended_text_message
+            .as_option()
+            .expect("extended text");
+        assert_eq!(extended.matched_text.as_deref(), Some("zapfast.rocks"));
+        assert_eq!(extended.title.as_deref(), Some("ZapFast"));
+        assert_eq!(
+            extended.description.as_deref(),
+            Some("WhatsApp, native and fast")
+        );
+        assert_eq!(
+            extended.jpeg_thumbnail.as_deref(),
+            Some(&[0xff, 0xd8, 0xff][..])
+        );
+        assert_eq!(extended.thumbnail_width, Some(192));
+        assert_eq!(extended.thumbnail_height, Some(128));
+        // And it comes back as a card on this machine, from the same proto.
+        match classify(&message) {
+            Some(Content::Text { preview, .. }) => {
+                let preview = preview.expect("preview");
+                assert_eq!(preview.url, "https://zapfast.rocks/");
+                assert_eq!(preview.title.as_deref(), Some("ZapFast"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_quote_without_a_link_stays_plain_text() {
+        let message = outgoing_text("no link here".into(), None, &[], None);
+        assert!(message.extended_text_message.as_option().is_none());
+        assert_eq!(message.conversation.as_deref(), Some("no link here"));
+    }
+
+    #[test]
     fn link_previews_and_mentions_come_from_extended_text() {
         let message = {
             let mut proto = wa::Message::default();
@@ -18055,6 +18163,7 @@ mod tests {
                 proto
             }),
             &mentions,
+            None,
         );
 
         assert_eq!(message.text_content(), Some("hello @491702222222"));
@@ -18143,6 +18252,7 @@ mod tests {
                 proto
             }),
             &mentions,
+            None,
         );
         let context = context_of(&message).expect("text context");
         assert_eq!(context.non_jid_mentions, Some(3));
@@ -18157,6 +18267,7 @@ mod tests {
                 proto
             }),
             &[],
+            None,
         );
         assert_eq!(
             context_of(&plain).and_then(|context| context.non_jid_mentions),
@@ -18466,6 +18577,7 @@ mod tests {
                 proto
             }),
             &[],
+            None,
         );
 
         apply_ephemeral_expiration(&mut message, Some(604_800));
@@ -23844,7 +23956,7 @@ mod receipt_tests {
                     .insert_message(&source, Some(&original.encode_to_vec()))
                     .unwrap();
                 let (context, shown) = worker.quote(chat, Some("original")).unwrap().unwrap();
-                let mut reply = outgoing_text("Reply fixture".into(), Some(context), &[]);
+                let mut reply = outgoing_text("Reply fixture".into(), Some(context), &[], None);
                 apply_ephemeral_expiration(&mut reply, Some(86400));
                 let raw = reply.encode_to_vec();
                 let decoded = wa::Message::decode_from_slice(&raw).unwrap();

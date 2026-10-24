@@ -197,12 +197,22 @@ pub enum Command {
         text: String,
         quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
+<<<<<<< HEAD
         /// A preview built here for the first link in `text`.
         preview: Option<crate::model::ComposedPreview>,
     },
     /// Reads the page behind a link in the composer; answered by
     /// [`Event::LinkPreview`]. A newer request replaces an unfinished one.
     FetchLinkPreview {
+=======
+        /// Metadata for a link the reader is sending, read from the page by
+        /// the composer. `None` sends the bare text.
+        preview: Option<crate::link_preview::Preview>,
+    },
+    /// Reads a link's page so the composer can show, and later send, a card.
+    FetchLinkPreview {
+        request: u64,
+>>>>>>> 6ffd151 (Link previews for the links you send)
         url: String,
     },
     SendLocation {
@@ -1178,6 +1188,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+<<<<<<< HEAD
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,
@@ -1195,6 +1206,12 @@ pub enum Event {
     LinkPreview {
         url: String,
         preview: Option<crate::model::ComposedPreview>,
+=======
+    /// What the composer's link preview request found, or `None` for no card.
+    LinkPreview {
+        request: u64,
+        preview: Option<crate::link_preview::Preview>,
+>>>>>>> 6ffd151 (Link previews for the links you send)
     },
     InteractiveReplyState {
         chat: ChatId,

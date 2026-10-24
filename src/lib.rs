@@ -29,7 +29,11 @@ pub mod group_admin;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;
+<<<<<<< HEAD
 pub mod lottie;
+=======
+pub mod link_preview;
+>>>>>>> 6ffd151 (Link previews for the links you send)
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;

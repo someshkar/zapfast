@@ -82,6 +82,7 @@ pub fn respond(app: &mut App) {
                 preview,
             } => {
                 let quoted = quoting.and_then(|id| quote(app, &chat, id));
+<<<<<<< HEAD
                 let (content, thumbnail) = match preview {
                     Some(preview) => (
                         Content::Text {
@@ -94,7 +95,25 @@ pub fn respond(app: &mut App) {
                 };
                 let mut row = outgoing(app, &chat, content);
                 row.thumbnail = thumbnail;
+=======
+                let thumbnail = preview
+                    .as_ref()
+                    .and_then(|preview| preview.thumbnail.clone());
+                let content = match preview {
+                    Some(preview) => Content::Text {
+                        text: text.clone(),
+                        preview: Some(crate::model::LinkPreview {
+                            url: preview.url,
+                            title: preview.title,
+                            description: preview.description,
+                        }),
+                    },
+                    None => Content::text(text),
+                };
+                let mut row = outgoing(app, &chat, content);
+>>>>>>> 6ffd151 (Link previews for the links you send)
                 row.quoted = quoted;
+                row.thumbnail = thumbnail;
                 row.mentions = mentions
                     .into_iter()
                     .map(|id| crate::model::MentionRef {
