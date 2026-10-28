@@ -1,0 +1,131 @@
+name: Upstream sync
+
+# Replays this fork's own commits on top of crmne/zapfast's main, so the link
+# previews keep working while upstream's fixes and features arrive. `main` is
+# only ever upstream's history with the fork's commits on top; see FORK.md.
+#
+# The replay needs a person when upstream and the fork change the same lines.
+# Then nothing is pushed to main: the half-replayed branch is published as
+# `upstream-sync/next`, an issue lists the files to resolve, and the run fails
+# so the red mark is the notification.
+on:
+  schedule:
+    # Upstream merges most days, so one pass a day keeps the fork close without
+    # another cron entry to explain.
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+    inputs:
+      verify:
+        description: Build and test the replayed tree before pushing main
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: crmne/zapfast
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sync:
+    name: sync
+    runs-on: ubuntu-latest
+    # A cold build of the replayed tree is the long part; cached runs are
+    # minutes. The replay itself is seconds.
+    timeout-minutes: 90
+    steps:
+      - name: Check out the fork's main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          # Full history: the replay needs the merge base with upstream.
+          fetch-depth: 0
+          # A token of its own where one is configured. Commits pushed with
+          # GITHUB_TOKEN start no workflow, so with the default token the CI run
+          # on the replayed main has to be started by hand below.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream main
+
+      - name: Replay the fork's commits on upstream's main
+        id: sync
+        # A conflict is a result to report, not a crash: the steps below hand it
+        # over and fail the run on purpose.
+        continue-on-error: true
+        run: .github/scripts/sync-upstream.sh
+
+      - name: Install GUI build dependencies
+        if: >-
+          steps.sync.outputs.changed == 'true' &&
+          !(github.event_name == 'workflow_dispatch' && inputs.verify == false)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
+
+      - name: Check the replayed tree
+        if: >-
+          steps.sync.outputs.changed == 'true' &&
+          !(github.event_name == 'workflow_dispatch' && inputs.verify == false)
+        # rust-toolchain.toml pins the compiler and names rustfmt and clippy, so
+        # rustup installs exactly what CI uses on the first cargo command.
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all-targets
+
+      - name: Push the replayed main
+        if: steps.sync.outputs.changed == 'true'
+        run: git push --force-with-lease origin HEAD:main
+
+      - name: Start CI on the replayed main
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+        # Named workflow dispatch is one of the two events GITHUB_TOKEN may
+        # start, so this works with either token. With SYNC_TOKEN the push
+        # already started CI and the concurrency group cancels the duplicate.
+        run: gh workflow run ci.yml --ref main
+
+      - name: Hand over a conflicting replay
+        if: steps.sync.outputs.changed == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          BRANCH: upstream-sync/next
+          SUBJECT: ${{ steps.sync.outputs.conflict_subject }}
+          FILES: ${{ steps.sync.outputs.conflict_files }}
+          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+        run: .github/scripts/sync-conflict.sh
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            printf '### Upstream sync\n\n'
+            printf '| | |\n|---|---|\n'
+            printf '| upstream | `%s` |\n' "${{ steps.sync.outputs.upstream_sha }}"
+            printf '| new upstream commits | %s |\n' "${{ steps.sync.outputs.upstream_commits }}"
+            printf '| replayed | %s |\n' "${{ steps.sync.outputs.replayed }}"
+            printf '| skipped | %s |\n' "${{ steps.sync.outputs.skipped }}"
+            printf '| result | %s |\n' "${{ steps.sync.outputs.changed }}"
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.sync.outputs.changed }}" = "true" ]; then
+            {
+              printf '\nThe binaries on the releases page are built from `main` on our own\n'
+              printf 'machines, so they still carry the previous version:\n\n'
+              printf '```sh\nscripts/fork-release.sh vX.Y.Z-fork.N\n```\n'
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail on a replay that did not finish
+        if: steps.sync.outcome == 'failure'
+        run: exit 1
