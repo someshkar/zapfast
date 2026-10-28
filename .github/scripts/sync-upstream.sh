@@ -129,10 +129,20 @@ ours. Resolve the markers, amend them into \"${subject}\", then:
     git push --force-with-lease origin HEAD:main
 
 Files: ${conflict_files[*]}"
-    # Publish the half-done replay so the resolution can happen anywhere, from
-    # a checkout of this branch. The workflow cannot do it: switching branches
-    # is what removed this script from the working tree.
-    git push --force-with-lease origin "HEAD:refs/heads/$work_branch"
+    # Publish the half-done replay so the resolution can start from a checkout
+    # of this branch. Switching branches is what removed this script from the
+    # working tree, so the workflow cannot do it afterwards.
+    #
+    # A replay carries upstream's workflow files, and only a token with the
+    # `Workflows` permission may publish those: the default GITHUB_TOKEN cannot,
+    # so the push is allowed to fail and the run summary carries the rest.
+    if ! git push --force-with-lease origin "HEAD:refs/heads/$work_branch"; then
+        echo "could not publish $work_branch (needs a token with the Workflows" \
+            "permission; see FORK.md)" >&2
+        out published false
+    else
+        out published true
+    fi
     out changed conflict
     out conflict_subject "$subject"
     out conflict_commit "${commit:0:12}"

@@ -39,6 +39,28 @@ reusable workflow in the maintainer's repository. Dropping them on each run also
 drops the ones upstream adds later, which a one-off commit cannot do. They are
 listed in `DROP_WORKFLOWS` at the top of the script.
 
+### The one thing to set up
+
+The replay carries upstream's `.github/workflows` changes, and only a token with
+the **Workflows** permission may publish those — the default `GITHUB_TOKEN`
+cannot, so every write step fails with `refusing to allow a GitHub App to create
+or update workflow`.
+
+Create a fine-grained token (Settings → Developer settings → Personal access
+tokens → Fine-grained), limited to this repository, with:
+
+| Permission | Access |
+|---|---|
+| Contents | Read and write |
+| Workflows | Read and write |
+| Actions | Read and write |
+| Metadata | Read (added automatically) |
+
+Save it as the `SYNC_TOKEN` secret (Settings → Secrets and variables → Actions).
+The workflow prefers it and falls back to `GITHUB_TOKEN`, which can still run the
+replay and report, but cannot publish. With `SYNC_TOKEN` the push to `main` also
+starts CI by itself.
+
 ## Adding a change to the fork
 
 Commit it to `main` as usual, ideally one commit per change: a commit is the
@@ -49,9 +71,9 @@ commit.
 ## When a replay conflicts
 
 Upstream and the fork changed the same lines. The workflow pushes nothing to
-`main`; it publishes the replay so far as `upstream-sync/next`, with the
-conflict markers committed, opens an issue listing the files, and fails the run
-red.
+`main`. It publishes the replay so far as `upstream-sync/next`, with the conflict
+markers committed, writes the files to resolve into the run summary (issues are
+disabled on this fork), and fails the run red.
 
 ```sh
 git fetch origin upstream-sync/next

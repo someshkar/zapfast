@@ -52,6 +52,18 @@ jobs:
           # on the replayed main has to be started by hand below.
           token: ${{ secrets.SYNC_TOKEN || github.token }}
 
+      - name: Say whether this token may publish
+        env:
+          HAVE_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAVE_SYNC_TOKEN" = "true" ]; then
+            echo "SYNC_TOKEN is set, so the replay can be published." 
+          else
+            echo "::warning::No SYNC_TOKEN secret. A replay that changes" \
+              ".github/workflows needs a token with the Workflows permission," \
+              "which GITHUB_TOKEN does not have. See FORK.md."
+          fi
+
       - name: Fetch upstream
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
@@ -85,7 +97,13 @@ jobs:
 
       - name: Push the replayed main
         if: steps.sync.outputs.changed == 'true'
-        run: git push --force-with-lease origin HEAD:main
+        run: |
+          git push --force-with-lease origin HEAD:main || {
+            echo "::error::The replay could not be published. A push that" \
+              "carries upstream's .github/workflows changes needs a token with" \
+              "the Workflows permission: set the SYNC_TOKEN secret. See FORK.md."
+            exit 1
+          }
 
       - name: Start CI on the replayed main
         if: steps.sync.outputs.changed == 'true'
