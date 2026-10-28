@@ -124,15 +124,20 @@ while read -r commit; do
     git commit --quiet --allow-empty \
         -m "Conflicting replay of \"${subject}\"" \
         -m "Upstream ${upstream_sha:0:12} changed these files under a commit of
-ours. Resolve the markers, then:
+ours. Resolve the markers, amend them into \"${subject}\", then:
 
     git push --force-with-lease origin HEAD:main
 
-Files: ${conflict_files[*]}" 
+Files: ${conflict_files[*]}"
+    # Publish the half-done replay so the resolution can happen anywhere, from
+    # a checkout of this branch. The workflow cannot do it: switching branches
+    # is what removed this script from the working tree.
+    git push --force-with-lease origin "HEAD:refs/heads/$work_branch"
     out changed conflict
     out conflict_subject "$subject"
     out conflict_commit "${commit:0:12}"
     out conflict_files "${conflict_files[*]}"
+    out work_branch "$work_branch"
     exit 3
 done < <(git rev-list --reverse "$base..$fork_ref")
 

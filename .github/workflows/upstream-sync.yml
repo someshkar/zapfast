@@ -98,13 +98,31 @@ jobs:
 
       - name: Hand over a conflicting replay
         if: steps.sync.outputs.changed == 'conflict'
-        env:
-          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
-          BRANCH: upstream-sync/next
-          SUBJECT: ${{ steps.sync.outputs.conflict_subject }}
-          FILES: ${{ steps.sync.outputs.conflict_files }}
-          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
-        run: .github/scripts/sync-conflict.sh
+        # The replay is already published, and this script is no longer in the
+        # working tree the sync switched away from, so the instructions go in
+        # the run summary rather than in an issue. Issues are disabled here
+        # anyway.
+        run: |
+          {
+            printf '## Upstream sync needs a resolution\n\n'
+            printf 'Upstream moved to `%s` and the fork commit **%s** no longer\n' \
+              "${{ steps.sync.outputs.upstream_sha }}" \
+              "${{ steps.sync.outputs.conflict_subject }}"
+            printf 'applies on its own. Nothing was pushed to `main`.\n\n'
+            printf 'The replay so far is on `%s`, with the conflict markers\n' \
+              "${{ steps.sync.outputs.work_branch }}"
+            printf 'committed. To finish it:\n\n'
+            printf '```sh\n'
+            printf 'git fetch origin %s\n' "${{ steps.sync.outputs.work_branch }}"
+            printf 'git switch %s\n' "${{ steps.sync.outputs.work_branch }}"
+            printf '# resolve the markers in: %s\n' "${{ steps.sync.outputs.conflict_files }}"
+            printf 'git commit --all --amend\n'
+            printf 'git push --force-with-lease origin HEAD:main\n'
+            printf '```\n\n'
+            printf 'Amend it into the commit it belongs to, because the next sync replays\n'
+            printf 'that same commit and a resolution that lives only in `main` is\n'
+            printf 'replayed away tomorrow. FORK.md has the longer version.\n'
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Summarize
         if: always()
