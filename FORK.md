@@ -87,6 +87,30 @@ Resolve it into the commit it belongs to — `git commit --amend`, or an
 interactive rebase on the branch first — because the next sync replays that same
 commit, and a resolution that lives only in `main` is replayed away tomorrow.
 
+## Upstreaming the previews
+
+`link-previews` is the same change as one commit on top of `upstream/main`, with
+none of the fork's plumbing in it: no `src/updates.rs`, no
+`scripts/fork-release.sh`, no workflow files, no README blurb. That is the branch
+the pull request to `crmne/zapfast` comes from, and what CONTRIBUTING.md asks
+for: one focused change, squash-merged, catalogs untouched. The body of that pull
+request lives outside the repository, at `~/projects/zapfast-pr/body.md`.
+
+Its captures come from that branch, over the synthetic demo data, so no
+conversation of anyone's is in them:
+
+```sh
+cargo run --features demo -- --demo-page link-preview,light --demo-shot after.png
+cargo run --features demo -- --demo-page link-preview-off,light --demo-shot before.png
+```
+
+`link-preview-off` leaves the setting that builds the card switched off, which
+draws the link as `main` draws it today, so the pair differs only by the card.
+
+If upstream merges the previews, the fork's job for them ends: drop the link
+preview commits from `main` and keep the updater and the release script. The sync
+replays whatever `main` carries, so removing them is an ordinary commit.
+
 ## Releasing
 
 The workflow checks that the replayed tree builds, but the binaries on the
