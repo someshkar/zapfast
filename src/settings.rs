@@ -449,6 +449,9 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// Whether the composer reads a link's page to show, and send, a preview
+    /// card. Off sends bare links, as ZapFast used to.
+    pub preview_links: bool,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -565,6 +568,7 @@ impl Default for Settings {
             search_pane_width: 380.0,
             info_pane_width: 380.0,
             enter_sends: true,
+            preview_links: true,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,

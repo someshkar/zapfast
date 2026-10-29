@@ -1320,6 +1320,63 @@ fn interactive_sample(app: &mut App, with_image: bool) {
     app.scroll_to_bottom = true;
 }
 
+/// The card the composer builds from a link in the draft, and the message it
+/// sends. `built` false leaves the setting that builds it switched off, which
+/// draws the same draft and the same sent text as the app does without it: a
+/// plain link, no metadata. Used for the before-and-after captures.
+fn link_preview_sample(app: &mut App, built: bool) {
+    let id = SAMPLES[0].id;
+    let url = "https://zapfast.rocks/what-is-zapfast/";
+    let now = crate::util::now();
+    let metadata = || LinkPreview {
+        url: url.into(),
+        title: Some("What is ZapFast?".into()),
+        description: Some("A fast, native WhatsApp client for the desktop, in Rust.".into()),
+    };
+    let sent = message(
+        id,
+        "link-preview-sent",
+        true,
+        now - 60,
+        Content::Text {
+            text: format!("{url} has the tour"),
+            preview: built.then(metadata),
+        },
+    );
+    if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == id) {
+        chat.last_activity = sent.timestamp;
+        if let Some(last) = &mut chat.last {
+            last.labelled = sent.content.labelled();
+            last.from_me = sent.from_me;
+            last.sender = sent.sender.clone();
+            last.summary = sent.summary();
+            last.full = sent.content.full_summary();
+            last.status = sent.status;
+        }
+    }
+    app.conversations.get_mut(id).unwrap().messages.push(sent);
+    app.settings.preview_links = built;
+    app.composer = format!("{url} ");
+    app.composer_preview = built.then(|| crate::app::ComposerPreview {
+        chat: id.into(),
+        url: url.into(),
+        preview: Some(crate::link_preview::Preview {
+            url: url.into(),
+            matched: url.into(),
+            title: Some("What is ZapFast?".into()),
+            description: Some("A fast, native WhatsApp client for the desktop, in Rust.".into()),
+            thumbnail: Some(stock::thumbnail(stock::ZAPFAST)),
+            thumbnail_width: 44,
+            thumbnail_height: 44,
+        }),
+        request: 1,
+        silent: false,
+    });
+    app.open_chat = Some(id.into());
+    app.typing.clear();
+    app.scroll_to_bottom = true;
+}
+
 /// The first chat with only its last two messages: a conversation shorter
 /// than the view, which sits at its bottom.
 fn short_chat_sample(app: &mut App) {
@@ -2015,6 +2072,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "chat" | "" => {}
             "phone-menu" => phone_menu_sample(app),
             "short-chat" => short_chat_sample(app),
+            "link-preview" => link_preview_sample(app, true),
+            "link-preview-off" => link_preview_sample(app, false),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
@@ -9271,6 +9330,10 @@ mod tests {
             "call-video-incoming",
             "call-video-off",
             "pinned",
+            "link-preview",
+            "link-preview,light",
+            "link-preview-off",
+            "link-preview-off,light",
         ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
@@ -9282,6 +9345,36 @@ mod tests {
             render(&mut app, &ctx);
             assert!(!app.is_linked());
         }
+    }
+
+    /// The card the composer draws is the one the page describes: a frame of
+    /// the composer neither drops it nor asks for the page again. With the
+    /// setting off there is no card, which is what the captures compare.
+    #[test]
+    fn the_composer_keeps_the_card_a_link_page_describes() {
+        let ctx = egui::Context::default();
+        let mut app = self::app();
+        apply_flags(&mut app, Some("link-preview"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let card = app
+            .composer_preview
+            .as_ref()
+            .expect("the card survives a frame of the composer");
+        assert_eq!(card.url, "https://zapfast.rocks/what-is-zapfast/");
+        assert_eq!(
+            card.preview
+                .as_ref()
+                .and_then(|preview| preview.title.clone()),
+            Some("What is ZapFast?".to_owned())
+        );
+
+        let mut app = self::app();
+        apply_flags(&mut app, Some("link-preview-off"));
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        assert!(app.composer_preview.is_none());
+        assert!(!app.settings.preview_links);
     }
 
     /// Where fastframe-titlebar draws the caption buttons for a footprint

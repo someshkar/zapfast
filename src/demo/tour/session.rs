@@ -66,10 +66,26 @@ pub fn respond(app: &mut App) {
                 text,
                 quoting,
                 mentions,
+                preview,
             } => {
                 let quoted = quoting.and_then(|id| quote(app, &chat, id));
-                let mut row = outgoing(app, &chat, Content::text(text));
+                let thumbnail = preview
+                    .as_ref()
+                    .and_then(|preview| preview.thumbnail.clone());
+                let content = match preview {
+                    Some(preview) => Content::Text {
+                        text: text.clone(),
+                        preview: Some(crate::model::LinkPreview {
+                            url: preview.url,
+                            title: preview.title,
+                            description: preview.description,
+                        }),
+                    },
+                    None => Content::text(text),
+                };
+                let mut row = outgoing(app, &chat, content);
                 row.quoted = quoted;
+                row.thumbnail = thumbnail;
                 row.mentions = mentions
                     .into_iter()
                     .map(|id| crate::model::MentionRef {
