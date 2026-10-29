@@ -37,6 +37,9 @@ fn download_notice(error: String) -> String {
 pub const PAGE: usize = 60;
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
+/// How long a link must sit unchanged in the draft before its page is read:
+/// typing an address passes through many URLs, and each one would be a fetch.
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(700);
 /// WhatsApp message-edit window.
 pub const EDIT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// WhatsApp revoke-for-everyone window.
@@ -436,6 +439,16 @@ pub struct App {
     stale_images: Vec<String>,
     pub composer: String,
     composer_mentions: Vec<ComposerMention>,
+    /// The link card under the composer, once its page has answered.
+    pub composer_preview: Option<ComposerPreview>,
+    /// Numbering for the preview requests, so a slow page cannot overwrite a
+    /// newer draft's card.
+    preview_request: u64,
+    /// The draft's link and the moment it was first seen, so a fetch starts
+    /// once the reader stops typing rather than on every keystroke.
+    preview_wait: Option<(String, Instant)>,
+    /// A link the reader dismissed, until the draft's link changes again.
+    pub(crate) preview_dismissed: Option<String>,
     /// Byte offset of the `:` starting the active emoji query.
     pub emoji_start: Option<usize>,
     /// Keyboard-highlighted emoji in suggestions or the full picker.
@@ -1059,6 +1072,24 @@ pub struct ComposerMention {
     name: String,
 }
 
+/// The link card attached to the draft the reader is writing.
+#[derive(Clone, Debug)]
+pub struct ComposerPreview {
+    /// The chat the card belongs to: a draft does not carry its card to
+    /// another conversation.
+    pub chat: crate::model::ChatId,
+    /// The address that was asked for, as `first_url` found it.
+    pub url: String,
+    /// The page's metadata, or `None` while it is still being read (or when
+    /// the page said nothing worth a card).
+    pub preview: Option<crate::link_preview::Preview>,
+    /// The request this card answers, so an older page cannot replace it.
+    pub request: u64,
+    /// A card the page answered but had nothing to show: the strip stays
+    /// away, and the link is not asked for again in this draft.
+    pub silent: bool,
+}
+
 impl Pending {
     /// Whether the composer can preview the file as an image.
     pub fn is_picture_file(path: &std::path::Path) -> bool {
@@ -1406,6 +1437,10 @@ impl App {
             stale_images: Vec::new(),
             composer: String::new(),
             composer_mentions: Vec::new(),
+            composer_preview: None,
+            preview_request: 0,
+            preview_wait: None,
+            preview_dismissed: None,
             emoji_start: None,
             emoji_selected: 0,
             mention_start: None,
@@ -3320,6 +3355,15 @@ impl App {
             Event::CallLog(entries) => {
                 self.call_log = entries;
                 self.call_log_loaded = true;
+            }
+            Event::LinkPreview { request, preview } => {
+                if live
+                    && let Some(card) = &mut self.composer_preview
+                    && card.request == request
+                {
+                    card.silent = preview.is_none();
+                    card.preview = preview.filter(|preview| !preview.is_empty());
+                }
             }
             Event::Labels(labels) => {
                 self.labels = labels;
@@ -5805,6 +5849,77 @@ impl App {
         self.follow_outgoing();
     }
 
+    /// Keeps the composer's link card in step with the draft, asking the
+    /// worker for the page once the reader has stopped typing the address.
+    ///
+    /// Only a draft's own link is ever read: replies, quotes and messages
+    /// other people sent are never fetched.
+    pub(crate) fn sync_composer_preview(
+        &mut self,
+        ctx: &egui::Context,
+        chat: &crate::model::ChatId,
+    ) {
+        let url =
+            if !self.settings.preview_links || self.editing.is_some() || !self.pending.is_empty() {
+                None
+            } else {
+                crate::link_preview::first_url(&self.composer)
+            };
+        let Some(url) = url else {
+            self.composer_preview = None;
+            self.preview_wait = None;
+            self.preview_dismissed = None;
+            return;
+        };
+        // A dismissed card stays away until the draft's link changes.
+        if self.preview_dismissed.as_deref() != Some(url.as_str()) {
+            self.preview_dismissed = None;
+        }
+        if self.preview_dismissed.is_some() {
+            self.composer_preview = None;
+            return;
+        }
+        let current = self
+            .composer_preview
+            .as_ref()
+            .map(|card| (card.chat.clone(), card.url.clone()));
+        if let Some((card_chat, card_url)) = current
+            && card_chat == *chat
+            && card_url == url
+        {
+            return;
+        }
+        self.composer_preview = None;
+        let waiting = self.preview_wait.clone();
+        match waiting {
+            Some((asked, since)) if asked == url => {
+                let waited = since.elapsed();
+                if waited < PREVIEW_DEBOUNCE {
+                    ctx.request_repaint_after(PREVIEW_DEBOUNCE - waited);
+                    return;
+                }
+            }
+            _ => {
+                self.preview_wait = Some((url, Instant::now()));
+                ctx.request_repaint_after(PREVIEW_DEBOUNCE);
+                return;
+            }
+        }
+        self.preview_request += 1;
+        self.preview_wait = None;
+        self.composer_preview = Some(ComposerPreview {
+            chat: chat.clone(),
+            url: url.clone(),
+            preview: None,
+            request: self.preview_request,
+            silent: false,
+        });
+        self.backend.send(Command::FetchLinkPreview {
+            request: self.preview_request,
+            url,
+        });
+    }
+
     /// Dispatches composed text with its explicit quote target and restores it on refusal.
     fn send_text(
         &mut self,
@@ -5816,6 +5931,17 @@ impl App {
         if text.is_empty() {
             return;
         }
+        // The card belongs to the draft's link: once the text no longer holds
+        // it (an edit, a quote, a different chat) the message goes out bare.
+        let preview = self
+            .composer_preview
+            .take()
+            .filter(|card| card.chat == chat)
+            .filter(|card| {
+                crate::link_preview::first_url(&text).as_deref() == Some(card.url.as_str())
+            })
+            .and_then(|card| card.preview);
+        self.preview_wait = None;
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
         let mention_everyone = self.chat(&chat).is_some_and(Chat::can_mention_everyone)
             && crate::mentions::has_everyone_token(&text);
@@ -5850,6 +5976,7 @@ impl App {
             text,
             quoting,
             mentions,
+            preview,
         });
         self.follow_outgoing();
     }
@@ -18814,6 +18941,112 @@ mod tests {
             &egui::Context::default(),
         );
         assert!(!app.scroll_chats_to_top);
+    }
+
+    #[test]
+    fn the_composer_asks_for_a_link_only_once_it_settles() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat: crate::model::ChatId = "fixture@s.whatsapp.net".into();
+        app.open_chat = Some(chat.clone());
+        let ctx = egui::Context::default();
+
+        app.composer = "look at https://zapfast.rocks/".into();
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(
+            commands.try_recv().is_err(),
+            "the first frame only starts the wait"
+        );
+
+        // The address sits still past the debounce.
+        app.preview_wait = app
+            .preview_wait
+            .take()
+            .map(|(url, _)| (url, Instant::now() - PREVIEW_DEBOUNCE));
+        app.sync_composer_preview(&ctx, &chat);
+        match commands.try_recv().expect("a fetch") {
+            Command::FetchLinkPreview { request, url } => {
+                assert_eq!(url, "https://zapfast.rocks/");
+                assert_eq!(request, 1);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // A card already asked for is not asked for again every frame.
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(commands.try_recv().is_err());
+
+        // Neither is a link the setting turns off.
+        app.settings.preview_links = false;
+        app.composer = "another https://example.com/page".into();
+        app.sync_composer_preview(&ctx, &chat);
+        assert!(app.composer_preview.is_none());
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_card_travels_with_its_own_draft_only() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let chat: crate::model::ChatId = "fixture@s.whatsapp.net".into();
+        app.open_chat = Some(chat.clone());
+        let ctx = egui::Context::default();
+        let card = ComposerPreview {
+            chat: chat.clone(),
+            url: "https://zapfast.rocks/".into(),
+            preview: Some(crate::link_preview::Preview {
+                url: "https://zapfast.rocks/".into(),
+                matched: "https://zapfast.rocks/".into(),
+                title: Some("ZapFast".into()),
+                description: None,
+                thumbnail: None,
+                thumbnail_width: 0,
+                thumbnail_height: 0,
+            }),
+            request: 1,
+            silent: false,
+        };
+
+        // The draft still holds the link: the card goes with it.
+        app.composer_preview = Some(card.clone());
+        app.apply(
+            Action::SendText {
+                chat: chat.clone(),
+                text: "look at https://zapfast.rocks/".into(),
+                quoting: None,
+            },
+            &ctx,
+        );
+        let sent = drain_send(&mut commands).expect("a send");
+        assert_eq!(sent.title.as_deref(), Some("ZapFast"));
+
+        // The text no longer holds it: the message goes out bare.
+        app.composer_preview = Some(card);
+        app.apply(
+            Action::SendText {
+                chat,
+                text: "just words".into(),
+                quoting: None,
+            },
+            &ctx,
+        );
+        assert!(drain_send(&mut commands).is_none());
+    }
+
+    /// The card the send command carries, past the draft bookkeeping queued
+    /// before it.
+    fn drain_send(
+        commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    ) -> Option<crate::link_preview::Preview> {
+        while let Ok(command) = commands.try_recv() {
+            if let Command::SendText { preview, .. } = command {
+                return Some(preview).flatten();
+            }
+        }
+        panic!("no send command");
     }
 
     #[test]

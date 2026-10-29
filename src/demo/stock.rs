@@ -37,6 +37,13 @@ pub const DUSK: Photo = photo!("dusk.jpg", 1200, 800);
 pub const SPACEWALK: Photo = photo!("spacewalk.jpg", 900, 1200);
 /// Spotifast's logo, for its link preview.
 pub const SPOTIFAST: Photo = photo!("spotifast.png", 256, 256);
+/// ZapFast's own icon, for the preview of the link the link-card page sends.
+pub const ZAPFAST: Photo = Photo {
+    bytes: include_bytes!("../../packaging/macos/icon-1024.png"),
+    width: 1024,
+    height: 1024,
+    name: "demo-zapfast.png",
+};
 
 /// The pictures `thumbnail_for` cycles through.
 const PHOTOS: [Photo; 5] = [LAUNCH, ENGINE, VENUE, DUSK, SPACEWALK];

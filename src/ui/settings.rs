@@ -433,6 +433,14 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    chats.toggle(
+        translated(locale, "Preview links"),
+        translated(
+            locale,
+            "Reads the page for a link you send, and attaches its title, description and picture. Only a link in your own draft is fetched; links other people send are never opened.",
+        ),
+        |settings| &mut settings.preview_links,
+    );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
